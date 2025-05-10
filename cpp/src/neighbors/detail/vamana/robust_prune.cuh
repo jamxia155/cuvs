@@ -277,7 +277,7 @@ if(threadIdx.x==0 && i==0) printf("C outIdx:%d, list < graph, selecting (%d, %0.
         
 	  // Update rets of the occlusion list
           for(int occId = pass_start+1; occId < res_size; occId++) {
-            if(occlusion_list[occId] != raft::upper_bound<float>() && occlusion_list[occId] != raft::lower_bound<float>()) 
+            if(occlusion_list[occId] <= alpha && occlusion_list[occId] != raft::lower_bound<float>())
 	    {
 	      T* k_ptr = const_cast<T*>(&dataset((size_t)(new_nbh_list[occId].idx), 0));
               accT djk = dist<T, accT>(cand_ptr, k_ptr, dim, metric);

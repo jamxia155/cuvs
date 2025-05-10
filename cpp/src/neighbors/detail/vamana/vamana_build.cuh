@@ -97,8 +97,7 @@ void batched_insert_vamana(
   int degree  = graph.extent(1);
 
   // Algorithm params
-//  int max_batchsize = (int)(params.max_fraction * (float)N);
-  int max_batchsize = 1;
+  int max_batchsize = (int)(params.max_fraction * (float)N);
   if (max_batchsize > (int)dataset.extent(0)) {
     RAFT_LOG_WARN(
       "Max fraction is the fraction of the total dataset, so it cannot be larger 1.0, reducing it "
@@ -151,7 +150,8 @@ void batched_insert_vamana(
                                                                     visited_ids.data_handle(),
                                                                     visited_dists.data_handle(),
                                                                     (int)max_batchsize,
-                                                                    visited_size);
+                                                                    visited_size,
+                                                                    1);
 
   auto topk_pq_mem =
         raft::make_device_mdarray<Node<accT>>(res,
@@ -161,7 +161,7 @@ void batched_insert_vamana(
   auto s_coords_mem =
 	  raft::make_device_mdarray<T>(res,
 			  raft::resource::get_large_workspace_resource(res),
-			  raft::make_extents<int64_t>(max_batchsize, dim));
+			  raft::make_extents<int64_t>(min(maxBlocks, max(max_batchsize, reverse_batch)), dim));
 
 
 
