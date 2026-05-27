@@ -306,21 +306,21 @@ def main():
         "The input and output files are in big-ann-benchmark's binary format.",
         epilog="""Example usage
     # With existing query file
-    python -m cuvs_bench.generate_groundtruth --dataset /dataset/base.\
+    python -m cuvs_bench.generate_groundtruth /dataset/base.\
 fbin --output=groundtruth_dir --queries=/dataset/query.public.10K.fbin
 
     # With randomly generated queries
-    python -m cuvs_bench.generate_groundtruth --dataset /dataset/base.\
+    python -m cuvs_bench.generate_groundtruth /dataset/base.\
 fbin --output=groundtruth_dir --queries=random --n_queries=10000
 
     # Using only a subset of the dataset. Define queries by randomly
     # selecting vectors from the (subset of the) dataset.
-    python -m cuvs_bench.generate_groundtruth --dataset /dataset/base.\
-fbin --nrows=2000000 --cols=128 --output=groundtruth_dir \
+    python -m cuvs_bench.generate_groundtruth /dataset/base.\
+fbin --rows=2000000 --cols=128 --output=groundtruth_dir \
 --queries=random-choice --n_queries=10000
 
     # Prefiltered ground truth using a saved bitset file
-    python -m cuvs_bench.generate_groundtruth --dataset /dataset/base.\
+    python -m cuvs_bench.generate_groundtruth /dataset/base.\
 fbin --output=groundtruth_dir --queries=/dataset/query.fbin \
 --bitset=/dataset/groundtruth.filter.bin
 
@@ -328,7 +328,7 @@ fbin --output=groundtruth_dir --queries=/dataset/query.fbin \
     # compute the ground truth, and save the bitset to disk so the benchmark
     # can later run searches against the exact same filter.  The bitset is
     # written to <output>/groundtruth.filter.bin alongside the GT files.
-    python -m cuvs_bench.generate_groundtruth --dataset /dataset/base.\
+    python -m cuvs_bench.generate_groundtruth /dataset/base.\
 fbin --output=groundtruth_dir --queries=/dataset/query.fbin \
 --filter_reject_rate=0.1
     """,
