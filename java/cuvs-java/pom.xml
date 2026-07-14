@@ -257,7 +257,7 @@ SPDX-License-Identifier: Apache-2.0
                         <goals>
                             <goal>apply</goal>
                         </goals>
-                        <phase>validate</phase>
+                        <phase>none</phase>
                     </execution>
                 </executions>
                 <configuration>
