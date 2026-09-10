@@ -48,3 +48,5 @@
 #include <cuvs/preprocessing/quantize/scalar.h>
 
 #include <cuvs/selection/select_k.h>
+
+#include <cuvs/util/file_io.h>
