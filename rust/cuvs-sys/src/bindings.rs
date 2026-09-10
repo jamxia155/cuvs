@@ -3082,3 +3082,12 @@ unsafe extern "C" {
         out_idx: *mut DLManagedTensor,
     ) -> cuvsError_t;
 }
+unsafe extern "C" {
+    #[must_use]
+    pub fn cuvsReadLargeFile(
+        path: *const ::std::os::raw::c_char,
+        dest_ptr: *mut ::std::os::raw::c_void,
+        total_bytes: usize,
+        file_offset: u64,
+    ) -> cuvsError_t;
+}
