@@ -449,6 +449,70 @@ void write_large_file(const file_descriptor& fd,
                       const uint64_t file_offset);
 
 /**
+ * @brief A pending, stream-ordered GPUDirect Storage read started by ::read_large_file_async.
+ *
+ * Must be kept alive until the CUDA stream the read was enqueued on has been synchronized past it
+ * (e.g. via a later `cudaStreamSynchronize` on that same stream) -- destroying or finishing it
+ * before that point is undefined behavior, per KvikIO's own `StreamFuture` contract this wraps.
+ * Move-only.
+ */
+class GdsReadFuture {
+ public:
+  GdsReadFuture(GdsReadFuture&&) noexcept;
+  GdsReadFuture& operator=(GdsReadFuture&&) noexcept;
+  ~GdsReadFuture();
+
+  GdsReadFuture(const GdsReadFuture&)            = delete;
+  GdsReadFuture& operator=(const GdsReadFuture&) = delete;
+
+ private:
+  friend GdsReadFuture read_large_file_async(const file_descriptor&, void*, size_t, uint64_t, void*);
+  friend size_t finish_read_large_file_async(GdsReadFuture);
+
+  class impl;
+  explicit GdsReadFuture(std::unique_ptr<impl> impl);
+  std::unique_ptr<impl> impl_;
+};
+
+/**
+ * @brief Begin a stream-ordered, random-access read of a region of a file directly into device
+ * memory.
+ *
+ * Enqueues the read onto @p stream via KvikIO's `FileHandle::read_async` -- unlike
+ * ::read_large_file, this call itself does not block: it returns as soon as the read is enqueued,
+ * the same way `cudaMemcpyAsync` would. GPUDirect Storage is used when available; KvikIO's
+ * compatible I/O backend is used otherwise. Path-backed only (unlike ::read_large_file, which also
+ * accepts a pathless POSIX-only descriptor) -- async ordering on a CUDA stream is only meaningful
+ * for the KvikIO-backed path.
+ *
+ * @param fd          File descriptor identifying the file and its path. Must be path-backed.
+ * @param dest_ptr    Destination buffer. Must be device memory.
+ * @param total_bytes Number of bytes to read.
+ * @param file_offset Byte offset into the file to start reading from.
+ * @param stream      CUDA stream (as an opaque `CUstream`/`cudaStream_t` value, cast to `void*`)
+ *                    to order the read on.
+ * @return A future that must be kept alive and passed to ::finish_read_large_file_async once
+ *         @p stream has been synchronized past this read.
+ */
+GdsReadFuture read_large_file_async(const file_descriptor& fd,
+                                    void* dest_ptr,
+                                    size_t total_bytes,
+                                    uint64_t file_offset,
+                                    void* stream);
+
+/**
+ * @brief Complete a pending read started by ::read_large_file_async.
+ *
+ * Must only be called after the CUDA stream the read was enqueued on has been synchronized past it
+ * -- calling this earlier is undefined behavior (see ::GdsReadFuture). Releases the future's
+ * resources.
+ *
+ * @param future The pending read to complete (consumed).
+ * @return The number of bytes actually read.
+ */
+size_t finish_read_large_file_async(GdsReadFuture future);
+
+/**
  * @brief Sequential std::ostream backed by kvikio.
  *
  * Ordinary stream output is staged into a large host buffer and written to disk through kvikio,

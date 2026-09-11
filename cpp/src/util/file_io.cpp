@@ -9,6 +9,8 @@
 
 #include <kvikio/file_handle.hpp>
 
+#include <cuda.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -203,6 +205,56 @@ void write_large_file(const file_descriptor& fd,
                path.c_str(),
                total_bytes,
                bytes_written);
+}
+
+class GdsReadFuture::impl {
+ public:
+  impl(kvikio::FileHandle&& handle, kvikio::StreamFuture&& future)
+    : handle_(std::move(handle)), future_(std::move(future))
+  {
+  }
+
+  // Both must stay alive together until the read completes -- the FileHandle owns the underlying
+  // OS/cuFile resources the enqueued read references, not just the StreamFuture itself.
+  kvikio::FileHandle handle_;
+  kvikio::StreamFuture future_;
+};
+
+GdsReadFuture::GdsReadFuture(std::unique_ptr<impl> impl) : impl_(std::move(impl)) {}
+GdsReadFuture::GdsReadFuture(GdsReadFuture&&) noexcept            = default;
+GdsReadFuture& GdsReadFuture::operator=(GdsReadFuture&&) noexcept = default;
+GdsReadFuture::~GdsReadFuture()                                  = default;
+
+GdsReadFuture read_large_file_async(const file_descriptor& fd,
+                                    void* dest_ptr,
+                                    const size_t total_bytes,
+                                    const uint64_t file_offset,
+                                    void* stream)
+{
+  RAFT_EXPECTS(total_bytes > 0, "Total bytes must be greater than 0");
+  RAFT_EXPECTS(dest_ptr != nullptr, "Destination pointer must not be nullptr");
+  RAFT_EXPECTS(fd.is_valid(), "File descriptor must be valid");
+  RAFT_EXPECTS(detail::is_kvikio_device_memory(dest_ptr),
+               "read_large_file_async requires a device-memory destination");
+  const std::string path = fd.get_path();
+  RAFT_EXPECTS(!path.empty(), "read_large_file_async requires a path-backed file descriptor");
+
+  auto handle = detail::open_kvikio_file_for_device_io(path, "r");
+  validate_kvikio_handle_matches_fd(fd, handle, path);
+  auto future = handle.read_async(dest_ptr,
+                                  total_bytes,
+                                  static_cast<off_t>(file_offset),
+                                  /*devPtr_offset=*/0,
+                                  reinterpret_cast<CUstream>(stream));
+  return GdsReadFuture(
+    std::make_unique<GdsReadFuture::impl>(std::move(handle), std::move(future)));
+}
+
+size_t finish_read_large_file_async(GdsReadFuture future)
+{
+  RAFT_EXPECTS(future.impl_ != nullptr,
+               "finish_read_large_file_async called on an empty future");
+  return future.impl_->future_.check_bytes_done();
 }
 
 class kvikio_file_reader::impl {
