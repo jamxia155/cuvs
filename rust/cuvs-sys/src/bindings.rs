@@ -3091,22 +3091,3 @@ unsafe extern "C" {
         file_offset: u64,
     ) -> cuvsError_t;
 }
-pub type cuvsGdsReadFuture_t = *mut ::std::os::raw::c_void;
-unsafe extern "C" {
-    #[must_use]
-    pub fn cuvsReadLargeFileAsync(
-        path: *const ::std::os::raw::c_char,
-        dest_ptr: *mut ::std::os::raw::c_void,
-        total_bytes: usize,
-        file_offset: u64,
-        stream: cudaStream_t,
-        future_out: *mut cuvsGdsReadFuture_t,
-    ) -> cuvsError_t;
-}
-unsafe extern "C" {
-    #[must_use]
-    pub fn cuvsFinishReadLargeFileAsync(
-        future: cuvsGdsReadFuture_t,
-        total_bytes: usize,
-    ) -> cuvsError_t;
-}
