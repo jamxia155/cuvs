@@ -42,14 +42,58 @@
 #include <thrust/transform.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <optional>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace cuvs::cluster::kmeans::detail {
+
+// Experimental selector for the top-1 NN backend used by predict_core (assignment), read once from
+// LANCE_CUVS_TOP1NN_BACKEND. For float inputs the paths differ in precision and implementation:
+//   auto (default, also when unset)  cuTile when built (CUDA 13) and available, else the legacy
+//                                    heuristic (CUTLASS on sm_80, and on sm_90 for large problems)
+//   stable   the legacy heuristic only, never cuTile
+//   cutile   fused cuTile kernel, one TF32 pass
+//   cutlass  fused CUTLASS GEMM + arg-min epilogue, 3xTF32 (close to fp32 accuracy)
+//   unfused  cuBLAS GEMM (one TF32 pass unless strict_fp32) + a separate arg-min kernel
+// Explicit choices other than auto/stable make top_1_nn fail if that backend is unavailable
+// (RAFT_EXPECTS in probe_top_1_nn), so a run never silently uses a different path. An unknown
+// value fails too.
+inline cuvs::distance::detail::Top1nnBackend predict_top_1_nn_backend()
+{
+  using cuvs::distance::detail::Top1nnBackend;
+  static const Top1nnBackend backend = [] {
+    const char* env             = std::getenv("LANCE_CUVS_TOP1NN_BACKEND");
+    const std::string_view name = env == nullptr ? std::string_view("auto") : std::string_view(env);
+    Top1nnBackend selected;
+    if (name == "auto" || name.empty()) {
+      selected = Top1nnBackend::Auto;
+    } else if (name == "stable") {
+      selected = Top1nnBackend::Stable;
+    } else if (name == "cutile") {
+      selected = Top1nnBackend::Cutile;
+    } else if (name == "cutlass") {
+      selected = Top1nnBackend::Cutlass;
+    } else if (name == "unfused") {
+      selected = Top1nnBackend::Unfused;
+    } else {
+      RAFT_FAIL(
+        "LANCE_CUVS_TOP1NN_BACKEND=%s is not one of auto, stable, cutile, cutlass, unfused", env);
+    }
+    std::fprintf(stderr,
+                 "cuVS predict: top_1_nn backend request=%.*s (LANCE_CUVS_TOP1NN_BACKEND)\n",
+                 static_cast<int>(name.size()),
+                 name.data());
+    return selected;
+  }();
+  return backend;
+}
 
 /**
  * @brief Predict labels for the dataset; floating-point types only.
@@ -110,7 +154,9 @@ inline std::enable_if_t<std::is_floating_point_v<MathT>> predict_core(
         params.metric,
         0,  // default top_1_nn row tuning
         0,  // default top_1_nn candidate tuning
-        workspace);
+        workspace,
+        std::nullopt,
+        predict_top_1_nn_backend());
 
       cuvs::cluster::kmeans::detail::copyClusterLabels(handle, result, labels);
       break;
