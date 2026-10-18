@@ -58,13 +58,11 @@ namespace cuvs::cluster::kmeans::detail {
 // LANCE_CUVS_TOP1NN_BACKEND. For float inputs the paths differ in precision and implementation:
 //   auto (default, also when unset)  cuTile when built (CUDA 13) and available, else the legacy
 //                                    heuristic (CUTLASS on sm_80, and on sm_90 for large problems)
-//   stable   the legacy heuristic only, never cuTile
 //   cutile   fused cuTile kernel, one TF32 pass
 //   cutlass  fused CUTLASS GEMM + arg-min epilogue, 3xTF32 (close to fp32 accuracy)
 //   unfused  cuBLAS GEMM (one TF32 pass unless strict_fp32) + a separate arg-min kernel
-// Explicit choices other than auto/stable make top_1_nn fail if that backend is unavailable
-// (RAFT_EXPECTS in probe_top_1_nn), so a run never silently uses a different path. An unknown
-// value fails too.
+// Explicit choices make top_1_nn fail if that backend is unavailable (RAFT_EXPECTS in
+// probe_top_1_nn), so a run never silently uses a different path. An unknown value fails too.
 inline cuvs::distance::detail::Top1nnBackend predict_top_1_nn_backend()
 {
   using cuvs::distance::detail::Top1nnBackend;
@@ -74,8 +72,6 @@ inline cuvs::distance::detail::Top1nnBackend predict_top_1_nn_backend()
     Top1nnBackend selected;
     if (name == "auto" || name.empty()) {
       selected = Top1nnBackend::Auto;
-    } else if (name == "stable") {
-      selected = Top1nnBackend::Stable;
     } else if (name == "cutile") {
       selected = Top1nnBackend::Cutile;
     } else if (name == "cutlass") {
@@ -83,8 +79,7 @@ inline cuvs::distance::detail::Top1nnBackend predict_top_1_nn_backend()
     } else if (name == "unfused") {
       selected = Top1nnBackend::Unfused;
     } else {
-      RAFT_FAIL(
-        "LANCE_CUVS_TOP1NN_BACKEND=%s is not one of auto, stable, cutile, cutlass, unfused", env);
+      RAFT_FAIL("LANCE_CUVS_TOP1NN_BACKEND=%s is not one of auto, cutile, cutlass, unfused", env);
     }
     std::fprintf(stderr,
                  "cuVS predict: top_1_nn backend request=%.*s (LANCE_CUVS_TOP1NN_BACKEND)\n",
