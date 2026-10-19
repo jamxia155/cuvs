@@ -623,6 +623,23 @@ CUVS_EXPORT cuvsError_t cuvsIvfPqTransform(cuvsResources_t res,
                                DLManagedTensor* input_dataset,
                                DLManagedTensor* output_labels,
                                DLManagedTensor* output_dataset);
+
+/**
+ * @brief Like `cuvsIvfPqTransform`, but pq-encode against coarse labels the caller already made.
+ *
+ * @param[in] res cuvsResources_t opaque C handle
+ * @param[in] index IVF-PQ index
+ * @param[in] input_dataset DLManagedTensor* vectors to transform
+ * @param[in] labels DLManagedTensor* uint32 [n_rows] cluster id of each input vector, valid in
+ *                   [0, n_lists); not modified
+ * @param[out] output_dataset DLManagedTensor* input vectors after pq-encoding
+ * @return cuvsError_t
+ */
+CUVS_EXPORT cuvsError_t cuvsIvfPqTransformWithLabels(cuvsResources_t res,
+                                         cuvsIvfPqIndex_t index,
+                                         DLManagedTensor* input_dataset,
+                                         DLManagedTensor* labels,
+                                         DLManagedTensor* output_dataset);
 /**
  * @}
  */

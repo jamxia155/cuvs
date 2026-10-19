@@ -236,7 +236,8 @@ void _transform(cuvsResources_t res,
                                   cuvsIvfPqIndex index,
              DLManagedTensor* input_dataset,
              DLManagedTensor* output_labels,
-             DLManagedTensor* output_dataset)
+             DLManagedTensor* output_dataset,
+             bool labels_given)
 {
   auto index_ptr    = reinterpret_cast<cuvs::neighbors::ivf_pq::index<IdxT>*>(index.addr);
   auto res_ptr      = reinterpret_cast<raft::resources*>(res);
@@ -249,7 +250,52 @@ void _transform(cuvsResources_t res,
   auto labels_mds = cuvs::core::from_dlpack<labels_mdspan_type>(output_labels);
   auto output_mds = cuvs::core::from_dlpack<output_mdspan_type>(output_dataset);
 
-  cuvs::neighbors::ivf_pq::transform(*res_ptr, *index_ptr, input_mds, labels_mds, output_mds);
+  if (labels_given) {
+    cuvs::neighbors::ivf_pq::transform_with_labels(
+      *res_ptr, *index_ptr, input_mds, labels_mds, output_mds);
+  } else {
+    cuvs::neighbors::ivf_pq::transform(*res_ptr, *index_ptr, input_mds, labels_mds, output_mds);
+  }
+}
+
+// Shared by cuvsIvfPqTransform (labels are an output) and cuvsIvfPqTransformWithLabels (input).
+cuvsError_t _transform_checked(cuvsResources_t res,
+                               cuvsIvfPqIndex_t index,
+                               DLManagedTensor* input_dataset,
+                               DLManagedTensor* labels,
+                               DLManagedTensor* output_dataset,
+                               bool labels_given)
+{
+  return cuvs::core::translate_exceptions([=] {
+    RAFT_EXPECTS(cuvs::core::is_dlpack_device_compatible(input_dataset->dl_tensor),
+                 "input_dataset should have device compatible memory");
+    RAFT_EXPECTS(cuvs::core::is_dlpack_device_compatible(labels->dl_tensor),
+                 "labels should have device compatible memory");
+    RAFT_EXPECTS(cuvs::core::is_dlpack_device_compatible(output_dataset->dl_tensor),
+                 "output_dataset should have device compatible memory");
+
+    auto& labels_dl = labels->dl_tensor;
+    RAFT_EXPECTS(labels_dl.dtype.code == kDLUInt && labels_dl.dtype.bits == 32,
+                 "labels must have a uint32 dtype");
+    auto& output_dataset_dl = output_dataset->dl_tensor;
+    RAFT_EXPECTS(output_dataset_dl.dtype.code == kDLUInt && output_dataset_dl.dtype.bits == 8,
+                 "output_dataset must have a uint8 dtype");
+
+    auto& dataset = input_dataset->dl_tensor;
+    if (dataset.dtype.code == kDLFloat && dataset.dtype.bits == 32) {
+      _transform<float, int64_t>(res, *index, input_dataset, labels, output_dataset, labels_given);
+    } else if (dataset.dtype.code == kDLFloat && dataset.dtype.bits == 16) {
+      _transform<half, int64_t>(res, *index, input_dataset, labels, output_dataset, labels_given);
+    } else if (dataset.dtype.code == kDLInt && dataset.dtype.bits == 8) {
+      _transform<int8_t, int64_t>(res, *index, input_dataset, labels, output_dataset, labels_given);
+    } else if (dataset.dtype.code == kDLUInt && dataset.dtype.bits == 8) {
+      _transform<uint8_t, int64_t>(res, *index, input_dataset, labels, output_dataset, labels_given);
+    } else {
+      RAFT_FAIL("Unsupported input_dataset DLtensor dtype: %d and bits: %d",
+                dataset.dtype.code,
+                dataset.dtype.bits);
+    }
+  });
 }
 
 }  // namespace
@@ -597,37 +643,14 @@ extern "C" cuvsError_t cuvsIvfPqTransform(cuvsResources_t res,
                                           DLManagedTensor* input_dataset,
                                           DLManagedTensor* output_labels,
                                           DLManagedTensor* output_dataset) {
-  return cuvs::core::translate_exceptions(
-    [=] {
-      // Verify all tensors are on device
-      RAFT_EXPECTS(cuvs::core::is_dlpack_device_compatible(input_dataset->dl_tensor),
-                   "input_dataset should have device compatible memory");
-      RAFT_EXPECTS(cuvs::core::is_dlpack_device_compatible(output_labels->dl_tensor),
-                   "output_labels should have device compatible memory");
-      RAFT_EXPECTS(cuvs::core::is_dlpack_device_compatible(output_dataset->dl_tensor),
-                   "output_dataset should have device compatible memory");
+  return _transform_checked(res, index, input_dataset, output_labels, output_dataset, false);
+}
 
-      // Verify dtypes of inputs
-      auto& output_labels_dl = output_labels->dl_tensor;
-      RAFT_EXPECTS(output_labels_dl.dtype.code == kDLUInt && output_labels_dl.dtype.bits == 32,
-                   "output_labels must have a uint32 dtype ");
-      auto& output_dataset_dl = output_dataset->dl_tensor;
-      RAFT_EXPECTS(output_dataset_dl.dtype.code == kDLUInt && output_dataset_dl.dtype.bits == 8,
-                   "output_dataset must have a uint8 dtype");
-
-      auto & dataset = input_dataset->dl_tensor;
-      if (dataset.dtype.code == kDLFloat && dataset.dtype.bits == 32) {
-        _transform<float, int64_t>(res, *index, input_dataset, output_labels, output_dataset);
-      } else if (dataset.dtype.code == kDLFloat && dataset.dtype.bits == 16) {
-        _transform<half, int64_t>(res, *index, input_dataset, output_labels, output_dataset);
-      } else if (dataset.dtype.code == kDLInt && dataset.dtype.bits == 8) {
-        _transform<int8_t, int64_t>(res, *index, input_dataset, output_labels, output_dataset);
-      } else if (dataset.dtype.code == kDLUInt && dataset.dtype.bits == 8) {
-        _transform<uint8_t, int64_t>(res, *index, input_dataset, output_labels, output_dataset);
-      } else {
-        RAFT_FAIL("Unsupported input_dataset DLtensor dtype: %d and bits: %d",
-                  dataset.dtype.code,
-                  dataset.dtype.bits);
-      }
-    });
+extern "C" cuvsError_t cuvsIvfPqTransformWithLabels(cuvsResources_t res,
+                                                    cuvsIvfPqIndex_t index,
+                                                    DLManagedTensor* input_dataset,
+                                                    DLManagedTensor* labels,
+                                                    DLManagedTensor* output_dataset)
+{
+  return _transform_checked(res, index, input_dataset, labels, output_dataset, true);
 }

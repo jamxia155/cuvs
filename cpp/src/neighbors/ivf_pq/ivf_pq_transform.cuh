@@ -48,17 +48,21 @@ void transform_batch(raft::resources const& res,
                      raft::device_matrix_view<const float, IdxT, raft::row_major> cluster_centers,
                      raft::device_matrix_view<const T, IdxT, raft::row_major> dataset,
                      raft::device_vector_view<uint32_t, IdxT> output_labels,
-                     raft::device_matrix_view<uint8_t, IdxT, raft::row_major> output_dataset)
+                     raft::device_matrix_view<uint8_t, IdxT, raft::row_major> output_dataset,
+                     bool predict_labels)
 {
   IdxT n_rows                       = dataset.extent(0);
   rmm::device_async_resource_ref mr = raft::resource::get_workspace_resource_ref(res);
 
-  // Compute the labels for each vector
-  cuvs::cluster::kmeans::balanced_params kmeans_params;
-  kmeans_params.metric = coarse_clustering_metric(index.metric());
+  // Compute the labels for each vector, unless the caller already assigned them
+  // (`output_labels` is then an input).
+  if (predict_labels) {
+    cuvs::cluster::kmeans::balanced_params kmeans_params;
+    kmeans_params.metric = coarse_clustering_metric(index.metric());
 
-  cuvs::cluster::kmeans_balanced::predict(
-    res, kmeans_params, dataset, cluster_centers, output_labels, utils::mapping<float>{});
+    cuvs::cluster::kmeans_balanced::predict(
+      res, kmeans_params, dataset, cluster_centers, output_labels, utils::mapping<float>{});
+  }
 
   // Compute the residuals for each vector in the dataset
   auto dataset_residuals =
@@ -99,11 +103,12 @@ void transform_batch(raft::resources const& res,
 }
 
 template <typename T, typename IdxT>
-void transform(raft::resources const& res,
-               const index<IdxT>& index,
-               raft::device_matrix_view<const T, IdxT, raft::row_major> dataset,
-               raft::device_vector_view<uint32_t, IdxT> output_labels,
-               raft::device_matrix_view<uint8_t, IdxT, raft::row_major> output_dataset)
+void transform_impl(raft::resources const& res,
+                    const index<IdxT>& index,
+                    raft::device_matrix_view<const T, IdxT, raft::row_major> dataset,
+                    raft::device_vector_view<uint32_t, IdxT> output_labels,
+                    raft::device_matrix_view<uint8_t, IdxT, raft::row_major> output_dataset,
+                    bool predict_labels)
 {
   IdxT n_rows = dataset.extent(0);
   RAFT_EXPECTS(output_labels.extent(0) == n_rows, "incorrect number of rows in output_labels");
@@ -122,9 +127,10 @@ void transform(raft::resources const& res,
   // the kmeans_balanced::predict. Thus, we need the restructuring raft::copy.
   const auto n_clusters = index.n_lists();
 
-  auto cluster_centers =
-    raft::make_device_mdarray<float>(res, mr, raft::make_extents<IdxT>(n_clusters, index.dim()));
-  extract_centers(res, index, cluster_centers.view());
+  // Only needed to predict labels; skip the n_lists x dim copy when they are given.
+  auto cluster_centers = raft::make_device_mdarray<float>(
+    res, mr, raft::make_extents<IdxT>(predict_labels ? n_clusters : 0, index.dim()));
+  if (predict_labels) { extract_centers(res, index, cluster_centers.view()); }
 
   // Determine if a stream pool exist and make sure there is at least one stream in it so we
   // could use the stream for kernel/copy overlapping by enabling prefetch.
@@ -165,9 +171,31 @@ void transform(raft::resources const& res,
                     raft::make_const_mdspan(cluster_centers.view()),
                     batch_dataset,
                     batch_labels,
-                    batch_output_dataset);
+                    batch_output_dataset,
+                    predict_labels);
     vec_batches.prefetch_next_batch();
     raft::resource::sync_stream(res);
   }
+}
+
+template <typename T, typename IdxT>
+void transform(raft::resources const& res,
+               const index<IdxT>& index,
+               raft::device_matrix_view<const T, IdxT, raft::row_major> dataset,
+               raft::device_vector_view<uint32_t, IdxT> output_labels,
+               raft::device_matrix_view<uint8_t, IdxT, raft::row_major> output_dataset)
+{
+  transform_impl(res, index, dataset, output_labels, output_dataset, true);
+}
+
+/** As `transform`, but `labels` holds the caller's coarse assignment (an input). */
+template <typename T, typename IdxT>
+void transform_with_labels(raft::resources const& res,
+                           const index<IdxT>& index,
+                           raft::device_matrix_view<const T, IdxT, raft::row_major> dataset,
+                           raft::device_vector_view<uint32_t, IdxT> labels,
+                           raft::device_matrix_view<uint8_t, IdxT, raft::row_major> output_dataset)
+{
+  transform_impl(res, index, dataset, labels, output_dataset, false);
 }
 }  // namespace cuvs::neighbors::ivf_pq::detail

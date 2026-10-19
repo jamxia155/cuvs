@@ -25,4 +25,14 @@ void transform(raft::resources const& handle,
   cuvs::neighbors::ivf_pq::detail::transform(handle, index, dataset, output_labels, output_dataset);
 }
 
+void transform_with_labels(raft::resources const& handle,
+                           const cuvs::neighbors::ivf_pq::index<index_t>& index,
+                           raft::device_matrix_view<const data_t, index_t, raft::row_major> dataset,
+                           raft::device_vector_view<uint32_t, index_t> labels,
+                           raft::device_matrix_view<uint8_t, index_t, raft::row_major> output_dataset)
+{
+  cuvs::neighbors::ivf_pq::detail::transform_with_labels(
+    handle, index, dataset, labels, output_dataset);
+}
+
 }  // namespace cuvs::neighbors::ivf_pq

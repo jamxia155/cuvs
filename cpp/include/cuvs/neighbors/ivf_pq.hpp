@@ -2005,6 +2005,43 @@ void transform(raft::resources const& handle,
                raft::device_vector_view<uint32_t, int64_t> output_labels,
                raft::device_matrix_view<uint8_t, int64_t> output_dataset);
 /**
+ * @brief Like `transform`, but pq-encodes against a coarse assignment the caller already made.
+ *
+ * `labels` is an input here: the cluster id (row of the index centers) for each input vector,
+ * e.g. from a graph search over the centers. No label prediction is done. The residuals and
+ * codes are computed against the given labels, so they must be valid ids in `[0, n_lists)`.
+ *
+ * @param[in] handle
+ * @param[in] index ivf-pq constructed index
+ * @param[in] dataset a device matrix view to a row-major matrix [n_rows, index.dim()]
+ * @param[in] labels a device vector view [n_rows] with the cluster id of each input vector
+ * @param[out] output_dataset a device matrix view [n_rows, ceildiv(index.pq_dim() *
+ * index.pq_bits(), 8)] that will get populated with the pq-encoded dataset
+ */
+void transform_with_labels(raft::resources const& handle,
+                           const cuvs::neighbors::ivf_pq::index<int64_t>& index,
+                           raft::device_matrix_view<const float, int64_t, raft::row_major> dataset,
+                           raft::device_vector_view<uint32_t, int64_t> labels,
+                           raft::device_matrix_view<uint8_t, int64_t> output_dataset);
+/** @copydoc transform_with_labels */
+void transform_with_labels(raft::resources const& handle,
+                           const cuvs::neighbors::ivf_pq::index<int64_t>& index,
+                           raft::device_matrix_view<const half, int64_t, raft::row_major> dataset,
+                           raft::device_vector_view<uint32_t, int64_t> labels,
+                           raft::device_matrix_view<uint8_t, int64_t> output_dataset);
+/** @copydoc transform_with_labels */
+void transform_with_labels(raft::resources const& handle,
+                           const cuvs::neighbors::ivf_pq::index<int64_t>& index,
+                           raft::device_matrix_view<const int8_t, int64_t, raft::row_major> dataset,
+                           raft::device_vector_view<uint32_t, int64_t> labels,
+                           raft::device_matrix_view<uint8_t, int64_t> output_dataset);
+/** @copydoc transform_with_labels */
+void transform_with_labels(raft::resources const& handle,
+                           const cuvs::neighbors::ivf_pq::index<int64_t>& index,
+                           raft::device_matrix_view<const uint8_t, int64_t, raft::row_major> dataset,
+                           raft::device_vector_view<uint32_t, int64_t> labels,
+                           raft::device_matrix_view<uint8_t, int64_t> output_dataset);
+/**
  * @}
  */
 
