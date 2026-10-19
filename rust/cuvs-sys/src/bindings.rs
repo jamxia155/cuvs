@@ -774,6 +774,16 @@ unsafe extern "C" {
         output_dataset: *mut DLManagedTensor,
     ) -> cuvsError_t;
 }
+unsafe extern "C" {
+    #[must_use]
+    pub fn cuvsIvfPqTransformWithLabels(
+        res: cuvsResources_t,
+        index: cuvsIvfPqIndex_t,
+        input_dataset: *mut DLManagedTensor,
+        labels: *mut DLManagedTensor,
+        output_dataset: *mut DLManagedTensor,
+    ) -> cuvsError_t;
+}
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub enum cuvsNNDescentDistCompDtype {
