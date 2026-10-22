@@ -66,7 +66,8 @@ bool rotation_is_identity(raft::resources const& res, const index<IdxT>& index)
   constexpr uint32_t kBlock = 256;
   const uint32_t blocks =
     static_cast<uint32_t>(std::min<size_t>(1024, raft::div_rounding_up_safe<size_t>(total, kBlock)));
-  rmm::device_scalar<uint32_t> not_identity(0u, stream);
+  const uint32_t zero = 0u;  // device_scalar rejects an rvalue initial value
+  rmm::device_scalar<uint32_t> not_identity(zero, stream);
   rotation_not_identity_kernel<<<blocks, kBlock, 0, stream.get()>>>(
     rotation.data_handle(), n, not_identity.data());
   RAFT_CUDA_TRY(cudaPeekAtLastError());
