@@ -11,12 +11,67 @@
 #include "ivf_pq_build.cuh"
 #include "ivf_pq_process_and_fill_codes.cuh"
 
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <string_view>
+
 #include <cuvs/distance/distance.hpp>
 #include <cuvs/neighbors/ivf_pq.hpp>
 #include <raft/core/device_mdarray.hpp>
 #include <raft/core/resources.hpp>
+#include <rmm/device_scalar.hpp>
 
 namespace cuvs::neighbors::ivf_pq::detail {
+
+// Sets *not_identity if `matrix` ([n, n], row-major) differs from the identity.
+static __global__ void rotation_not_identity_kernel(const float* matrix,
+                                                    uint32_t n,
+                                                    uint32_t* not_identity)
+{
+  const size_t total = size_t{n} * n;
+  for (size_t i = size_t{blockIdx.x} * blockDim.x + threadIdx.x; i < total;
+       i += size_t{gridDim.x} * blockDim.x) {
+    const float expected = (i / n == i % n) ? 1.0f : 0.0f;
+    if (matrix[i] != expected) {
+      atomicOr(not_identity, 1u);
+      return;
+    }
+  }
+}
+
+// Whether the transform may skip the rotation GEMM: the rotation is the identity, which is what
+// ivf_pq builds when `rot_dim == dim` and `force_random_rotation` is false (the common case when
+// `dim` is a multiple of `pq_dim`). Checked once per `transform` call. Set
+// LANCE_CUVS_IVF_PQ_IDENTITY_ROTATION_SKIP=0 to always run the GEMM (for A/B comparisons).
+template <typename IdxT>
+bool rotation_is_identity(raft::resources const& res, const index<IdxT>& index)
+{
+  // Re-read on every call so a test can flip it within one process.
+  const char* env     = std::getenv("LANCE_CUVS_IVF_PQ_IDENTITY_ROTATION_SKIP");
+  const bool enabled  = env == nullptr || std::string_view(env) != "0";
+  static bool printed = false;
+  if (!printed) {
+    printed = true;
+    std::fprintf(stderr,
+                 "cuVS ivf_pq transform: identity-rotation skip %s "
+                 "(LANCE_CUVS_IVF_PQ_IDENTITY_ROTATION_SKIP)\n",
+                 enabled ? "enabled" : "disabled");
+  }
+  if (!enabled || index.rot_dim() != index.dim()) { return false; }
+  auto stream               = raft::resource::get_cuda_stream(res);
+  auto rotation             = index.rotation_matrix();
+  const uint32_t n          = rotation.extent(0);
+  const size_t total        = size_t{n} * n;
+  constexpr uint32_t kBlock = 256;
+  const uint32_t blocks =
+    static_cast<uint32_t>(std::min<size_t>(1024, raft::div_rounding_up_safe<size_t>(total, kBlock)));
+  rmm::device_scalar<uint32_t> not_identity(0u, stream);
+  rotation_not_identity_kernel<<<blocks, kBlock, 0, stream.get()>>>(
+    rotation.data_handle(), n, not_identity.data());
+  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  return not_identity.value(stream) == 0u;  // synchronizes `stream`
+}
 
 template <uint32_t BlockSize, uint32_t PqBits, typename IdxT>
 __launch_bounds__(BlockSize) static __global__ void transform_codes_kernel(
@@ -49,7 +104,8 @@ void transform_batch(raft::resources const& res,
                      raft::device_matrix_view<const T, IdxT, raft::row_major> dataset,
                      raft::device_vector_view<uint32_t, IdxT> output_labels,
                      raft::device_matrix_view<uint8_t, IdxT, raft::row_major> output_dataset,
-                     bool predict_labels)
+                     bool predict_labels,
+                     bool identity_rotation)
 {
   IdxT n_rows                       = dataset.extent(0);
   rmm::device_async_resource_ref mr = raft::resource::get_workspace_resource_ref(res);
@@ -76,7 +132,8 @@ void transform_batch(raft::resources const& res,
                                   dataset.data_handle(),
                                   output_labels.data_handle(),
                                   mr,
-                                  index.metric());
+                                  index.metric(),
+                                  identity_rotation);
 
   // Launch kernel to transform the code output
   constexpr uint32_t kBlockSize  = 256;
@@ -127,6 +184,8 @@ void transform_impl(raft::resources const& res,
   // the kmeans_balanced::predict. Thus, we need the restructuring raft::copy.
   const auto n_clusters = index.n_lists();
 
+  const bool identity_rotation = rotation_is_identity(res, index);
+
   // Only needed to predict labels; skip the n_lists x dim copy when they are given.
   auto cluster_centers = raft::make_device_mdarray<float>(
     res, mr, raft::make_extents<IdxT>(predict_labels ? n_clusters : 0, index.dim()));
@@ -172,7 +231,8 @@ void transform_impl(raft::resources const& res,
                     batch_dataset,
                     batch_labels,
                     batch_output_dataset,
-                    predict_labels);
+                    predict_labels,
+                    identity_rotation);
     vec_batches.prefetch_next_batch();
     raft::resource::sync_stream(res);
   }

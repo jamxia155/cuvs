@@ -148,13 +148,22 @@ void flat_compute_residuals(
   const T* dataset,                                                          // [n_rows, dim]
   std::variant<uint32_t, const uint32_t*> labels,                            // [n_rows]
   rmm::device_async_resource_ref device_memory,
-  cuvs::distance::DistanceType metric = cuvs::distance::DistanceType::L2Expanded)
+  cuvs::distance::DistanceType metric = cuvs::distance::DistanceType::L2Expanded,
+  // The caller has verified that `rotation_matrix` is the identity (so `rot_dim == dim`): the
+  // residuals are then computed in place in `residuals`, and the rotation GEMM and its [n_rows,
+  // dim] temporary are skipped.
+  bool rotation_is_identity = false)
 {
   auto stream  = raft::resource::get_cuda_stream(handle);
   auto dim     = rotation_matrix.extent(1);
   auto rot_dim = rotation_matrix.extent(0);
-  rmm::device_uvector<float> tmp(n_rows * dim, stream, device_memory);
-  auto tmp_view = raft::make_device_vector_view<float, size_t>(tmp.data(), tmp.size());
+  RAFT_EXPECTS(!rotation_is_identity || rot_dim == dim,
+               "an identity rotation must be square (rot_dim %u, dim %u)",
+               static_cast<unsigned>(rot_dim),
+               static_cast<unsigned>(dim));
+  rmm::device_uvector<float> tmp(rotation_is_identity ? 0 : n_rows * dim, stream, device_memory);
+  float* work   = rotation_is_identity ? residuals : tmp.data();
+  auto tmp_view = raft::make_device_vector_view<float, size_t>(work, size_t(n_rows) * dim);
 
   if (metric == cuvs::distance::DistanceType::CosineExpanded) {
     raft::linalg::map(
@@ -162,7 +171,7 @@ void flat_compute_residuals(
       tmp_view,
       raft::cast_op<float>{},
       raft::make_const_mdspan(raft::make_device_vector_view<const T, IdxT>(dataset, n_rows * dim)));
-    auto tmp_matrix_view = raft::make_device_matrix_view<float, size_t>(tmp.data(), n_rows, dim);
+    auto tmp_matrix_view = raft::make_device_matrix_view<float, size_t>(work, n_rows, dim);
     raft::linalg::row_normalize<raft::linalg::L2Norm>(
       handle, raft::make_const_mdspan(tmp_matrix_view), tmp_matrix_view);
   } else {
@@ -185,6 +194,8 @@ void flat_compute_residuals(
       return val - centers(label, el_ix);
     },
     raft::make_const_mdspan(tmp_view));
+
+  if (rotation_is_identity) { return; }
 
   float alpha = 1.0f;
   float beta  = 0.0f;
