@@ -43,22 +43,26 @@ static __global__ void rotation_not_identity_kernel(const float* matrix,
 // Whether the transform may skip the rotation GEMM: the rotation is the identity, which is what
 // ivf_pq builds when `rot_dim == dim` and `force_random_rotation` is false (the common case when
 // `dim` is a multiple of `pq_dim`). Checked once per `transform` call. Set
-// LANCE_CUVS_IVF_PQ_IDENTITY_ROTATION_SKIP=0 to always run the GEMM (for A/B comparisons).
+// LANCE_CUVS_IVF_PQ_IDENTITY_ROTATION_SKIP=0 to always run the GEMM (for A/B comparisons), or
+// =force to skip it whenever `rot_dim == dim` without looking at the matrix (wrong results if the
+// rotation is not the identity; for measuring the cost of the check).
 template <typename IdxT>
 bool rotation_is_identity(raft::resources const& res, const index<IdxT>& index)
 {
   // Re-read on every call so a test can flip it within one process.
   const char* env     = std::getenv("LANCE_CUVS_IVF_PQ_IDENTITY_ROTATION_SKIP");
   const bool enabled  = env == nullptr || std::string_view(env) != "0";
+  const bool forced   = env != nullptr && std::string_view(env) == "force";
   static bool printed = false;
   if (!printed) {
     printed = true;
     std::fprintf(stderr,
                  "cuVS ivf_pq transform: identity-rotation skip %s "
                  "(LANCE_CUVS_IVF_PQ_IDENTITY_ROTATION_SKIP)\n",
-                 enabled ? "enabled" : "disabled");
+                 forced ? "forced (matrix not checked)" : enabled ? "enabled" : "disabled");
   }
   if (!enabled || index.rot_dim() != index.dim()) { return false; }
+  if (forced) { return true; }
   auto stream               = raft::resource::get_cuda_stream(res);
   auto rotation             = index.rotation_matrix();
   const uint32_t n          = rotation.extent(0);
