@@ -784,6 +784,42 @@ unsafe extern "C" {
         output_dataset: *mut DLManagedTensor,
     ) -> cuvsError_t;
 }
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct cuvsGroupedAssignIndex {
+    pub addr: usize,
+}
+pub type cuvsGroupedAssignIndex_t = *mut cuvsGroupedAssignIndex;
+unsafe extern "C" {
+    #[must_use]
+    pub fn cuvsGroupedAssignIndexCreate(index: *mut cuvsGroupedAssignIndex_t) -> cuvsError_t;
+}
+unsafe extern "C" {
+    #[must_use]
+    pub fn cuvsGroupedAssignIndexDestroy(index: cuvsGroupedAssignIndex_t) -> cuvsError_t;
+}
+unsafe extern "C" {
+    #[must_use]
+    pub fn cuvsGroupedAssignBuild(
+        res: cuvsResources_t,
+        centroids: *mut DLManagedTensor,
+        metric: cuvsDistanceType,
+        n_lists: u32,
+        n_probes: u32,
+        kmeans_n_iters: u32,
+        tile_align: u32,
+        index: cuvsGroupedAssignIndex_t,
+    ) -> cuvsError_t;
+}
+unsafe extern "C" {
+    #[must_use]
+    pub fn cuvsGroupedAssign(
+        res: cuvsResources_t,
+        index: cuvsGroupedAssignIndex_t,
+        queries: *mut DLManagedTensor,
+        labels: *mut DLManagedTensor,
+    ) -> cuvsError_t;
+}
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub enum cuvsNNDescentDistCompDtype {
