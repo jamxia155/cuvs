@@ -206,7 +206,7 @@ void gemm_tf32(raft::resources const& res,
 {
   const float one = 1.f, zero = 0.f;
   cublasHandle_t h = raft::resource::get_cublas_handle(res);
-  RAFT_CUBLAS_TRY(cublasSetStream(h, raft::resource::get_cuda_stream(res)));
+  RAFT_CUBLAS_TRY(cublasSetStream(h, raft::resource::get_cuda_stream(res).get()));
   RAFT_CUBLAS_TRY(cublasGemmEx(h,
                                CUBLAS_OP_T,
                                CUBLAS_OP_N,
@@ -260,7 +260,7 @@ auto build(raft::resources const& res,
     1,
     K);
   const int align = static_cast<int>(params.tile_align);
-  auto stream     = raft::resource::get_cuda_stream(res);
+  cudaStream_t stream = raft::resource::get_cuda_stream(res).get();
 
   index idx(res);
   idx.n_centroids = K;
@@ -385,7 +385,7 @@ void assign(raft::resources const& res,
   const int align = static_cast<int>(idx.tile_align);
   const int64_t NP = (int64_t)B * P;
   RAFT_EXPECTS(NP < (int64_t{1} << 31), "batch * n_probes is too large");
-  auto stream = raft::resource::get_cuda_stream(res);
+  cudaStream_t stream = raft::resource::get_cuda_stream(res).get();
 
   // (1) list scores and each query's top-P lists
   const int Mpad = round_up(M, 8);
