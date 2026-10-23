@@ -88,6 +88,7 @@ add_library(
   src/cluster/kmeans.cpp
   $<$<BOOL:${BUILD_MG_ALGOS}>:src/cluster/mg_kmeans.cpp>
   src/neighbors/brute_force.cpp
+  src/neighbors/grouped_assign.cpp
   src/neighbors/ivf_flat.cpp
   src/neighbors/ivf_pq.cpp
   src/neighbors/ivf_sq.cpp
