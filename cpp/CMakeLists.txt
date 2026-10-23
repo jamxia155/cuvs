@@ -1501,6 +1501,7 @@ if(NOT BUILD_CPU_ONLY)
     ${ivf_pq_compute_similarity_inst_files}
     src/neighbors/ivf_pq/detail/ivf_pq_contiguous_list_data.cu
     src/neighbors/ivf_pq/detail/ivf_pq_list_data.cu
+    src/neighbors/ivf_pq/detail/ivf_pq_encode_codes.cu
     src/neighbors/ivf_pq/detail/ivf_pq_process_and_fill_codes.cu
     ${ivf_pq_search_inst_files}
     ${ivf_pq_transform_inst_files}

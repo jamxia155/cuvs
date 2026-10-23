@@ -9,6 +9,7 @@
 #include "../detail/ann_utils.cuh"
 #include "../ivf_common.cuh"
 #include "ivf_pq_build.cuh"
+#include "ivf_pq_encode_codes.hpp"
 #include "ivf_pq_process_and_fill_codes.cuh"
 
 #include <algorithm>
@@ -102,6 +103,43 @@ __launch_bounds__(BlockSize) static __global__ void transform_codes_kernel(
     output_dataset.data_handle(), row_ix, row_ix, pq_dim, output_dataset.extent(1), encoder);
 }
 
+enum class pq_encode_backend { baseline, simt, tensor, tensor3 };
+
+// Which kernel turns the residuals into PQ codes. LANCE_CUVS_PQ_ENCODE_BACKEND is one of:
+//   baseline  `transform_codes_kernel`, one sub-warp per vector, scalar loads (the default)
+//   simt      CUDA-core FP32, codebook staged in shared memory, register-tiled (same distances)
+//   tensor    TF32 tensor cores (mma.m16n8k8), argmin of |c|^2 - 2 x.c
+//   tensor3   as `tensor`, with 3xTF32 (hi/lo split) for close-to-FP32 accuracy
+// Re-read on every call so a test can switch paths within one process. `simt`, `tensor` and
+// `tensor3` need a PER_SUBSPACE codebook with pq_bits == 8 and fail otherwise, so a run never
+// silently uses a different path; an unknown value fails too.
+inline pq_encode_backend get_pq_encode_backend()
+{
+  const char* env           = std::getenv("LANCE_CUVS_PQ_ENCODE_BACKEND");
+  const std::string_view nm = env == nullptr ? std::string_view("baseline") : std::string_view(env);
+  pq_encode_backend selected;
+  if (nm == "baseline" || nm.empty()) {
+    selected = pq_encode_backend::baseline;
+  } else if (nm == "simt") {
+    selected = pq_encode_backend::simt;
+  } else if (nm == "tensor") {
+    selected = pq_encode_backend::tensor;
+  } else if (nm == "tensor3") {
+    selected = pq_encode_backend::tensor3;
+  } else {
+    RAFT_FAIL("LANCE_CUVS_PQ_ENCODE_BACKEND=%s is not one of baseline, simt, tensor, tensor3", env);
+  }
+  static bool printed = false;
+  if (!printed) {
+    printed = true;
+    std::fprintf(stderr,
+                 "cuVS ivf_pq transform: PQ encode backend request=%.*s (LANCE_CUVS_PQ_ENCODE_BACKEND)\n",
+                 static_cast<int>(nm.size()),
+                 nm.data());
+  }
+  return selected;
+}
+
 template <typename T, typename IdxT>
 void transform_batch(raft::resources const& res,
                      const index<IdxT>& index,
@@ -139,6 +177,35 @@ void transform_batch(raft::resources const& res,
                                   mr,
                                   index.metric(),
                                   identity_rotation);
+
+  const auto encode_backend = get_pq_encode_backend();
+  if (encode_backend != pq_encode_backend::baseline) {
+    RAFT_EXPECTS(index.codebook_kind() == codebook_gen::PER_SUBSPACE && index.pq_bits() == 8,
+                 "LANCE_CUVS_PQ_ENCODE_BACKEND=simt|tensor|tensor3 needs a PER_SUBSPACE codebook "
+                 "with pq_bits == 8");
+    auto stream = raft::resource::get_cuda_stream(res).get();
+    if (encode_backend == pq_encode_backend::simt) {
+      ivf_pq_encode_simt(stream,
+                         dataset_residuals.data_handle(),
+                         static_cast<int64_t>(n_rows),
+                         index.pq_dim(),
+                         index.pq_len(),
+                         index.pq_centers().data_handle(),
+                         output_dataset.data_handle(),
+                         static_cast<uint32_t>(output_dataset.extent(1)));
+    } else {
+      ivf_pq_encode_tensor(stream,
+                           dataset_residuals.data_handle(),
+                           static_cast<int64_t>(n_rows),
+                           index.pq_dim(),
+                           index.pq_len(),
+                           index.pq_centers().data_handle(),
+                           output_dataset.data_handle(),
+                           static_cast<uint32_t>(output_dataset.extent(1)),
+                           encode_backend == pq_encode_backend::tensor3 ? 3 : 1);
+    }
+    return;
+  }
 
   // Launch kernel to transform the code output
   constexpr uint32_t kBlockSize  = 256;
