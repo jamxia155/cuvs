@@ -12,7 +12,9 @@
 #include <raft/util/cudart_utils.hpp>
 #include <raft/util/cuda_utils.cuh>
 
-#include <cub/cub.cuh>
+#include <cub/block/block_reduce.cuh>
+#include <cub/device/device_radix_sort.cuh>
+#include <cub/util_type.cuh>
 #include <cublas_v2.h>
 
 #include <algorithm>
